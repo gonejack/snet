@@ -45,10 +45,6 @@ func NewServer(ctx context.Context, c *config.Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	if err != nil {
-		return nil, err
-	}
 	p, err := proxy.Get(c.ProxyType)
 	if err != nil {
 		return nil, err

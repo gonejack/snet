@@ -10,7 +10,6 @@ build_all: build_linux_amd64 build_darwin_amd64 build_mipsle_softfloat build_mip
 build_linux_amd64:
 	GOOS=linux GOARCH=amd64  go build -ldflags $(LDFLAGS) -o bin/snet_linux_amd64
 
-
 build_darwin_amd64:
 	GOOS=darwin GOARCH=amd64 go build -ldflags $(LDFLAGS) -o bin/snet_darwin_amd64
 

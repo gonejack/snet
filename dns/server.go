@@ -353,12 +353,12 @@ func (s *DNS) doQuery(srcIP string, data []byte, dnsQuery *DNSMsg) (raw []byte, 
 }
 
 func (s *DNS) queryCN(data []byte) ([]byte, error) {
-	conn, err := net.Dial("udp", fmt.Sprintf("%s:%d", s.cnDNS, dnsPort))
+	conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:%d", s.cnDNS, dnsPort), dnsTimeout*time.Second)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
-	if err := conn.SetReadDeadline(time.Now().Add(dnsTimeout * time.Second)); err != nil {
+	if err := conn.SetDeadline(time.Now().Add(dnsTimeout * time.Second)); err != nil {
 		return nil, err
 	}
 	if _, err = conn.Write(data); err != nil {
@@ -369,12 +369,12 @@ func (s *DNS) queryCN(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return b[0:n], nil
+	return b[:n], nil
 }
 
 func (s *DNS) queryFQ(data []byte) ([]byte, error) {
 	// query fq dns by tcp, it will be captured by iptables and go out through ss
-	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", s.fqDNS, dnsPort))
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", s.fqDNS, dnsPort), dnsTimeout*time.Second)
 	if err != nil {
 		return nil, err
 	}
