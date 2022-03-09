@@ -31,7 +31,7 @@ const (
 
 type DNS struct {
 	udpAddr              *net.UDPAddr
-	udpListener          *net.UDPConn
+	udpln                *net.UDPConn
 	cnDNS                string
 	fqDNS                string
 	enforceTTL           uint32
@@ -145,19 +145,19 @@ func (s *DNS) Run() error {
 		}
 		s.dnsLogger = log.New(f, "", log.LstdFlags)
 	}
-	s.udpListener, err = net.ListenUDP("udp", s.udpAddr)
+	s.udpln, err = net.ListenUDP("udp", s.udpAddr)
 	if err != nil {
 		return err
 	}
 	s.l.Info("DNS server listen on udp:", s.udpAddr)
-	defer s.udpListener.Close()
+	defer s.udpln.Close()
 	if s.Cache != nil && s.prefetchEnable {
 		s.l.Info("Starting dns prefetch ticker")
 		go s.prefetchTicker()
 	}
 	for {
 		b := make([]byte, 1024)
-		n, uaddr, err := s.udpListener.ReadFromUDP(b)
+		n, uaddr, err := s.udpln.ReadFromUDP(b)
 		if err != nil {
 			return err
 		}
@@ -169,15 +169,13 @@ func (s *DNS) Run() error {
 		}(uaddr, b[:n])
 	}
 }
-
 func (s *DNS) Shutdown() error {
-	if err := s.udpListener.Close(); err != nil {
+	if err := s.udpln.Close(); err != nil {
 		return err
 	}
 	s.l.Info("dns server shutdown")
 	return nil
 }
-
 func (s *DNS) badDomain(domain string) bool {
 	if utils.DomainMatch(domain, s.additionalBlockHosts) {
 		return true
@@ -195,7 +193,6 @@ func (s *DNS) badDomain(domain string) bool {
 	}
 	return false
 }
-
 func (s *DNS) isCNIP(ip net.IP) bool {
 	// radix tree cost ~20us to check ip in cidr.
 	// loop over whole cidr check cost 130us+,
@@ -205,27 +202,25 @@ func (s *DNS) isCNIP(ip net.IP) bool {
 	}
 	return false
 }
-
-func (s *DNS) handle(reqUaddr *net.UDPAddr, data []byte) error {
-
+func (s *DNS) handle(reqUAddr *net.UDPAddr, data []byte) error {
 	dnsQuery, err := s.parse(data)
 	if err != nil {
 		return err
 	}
 	for _, t := range s.disableQTypes {
 		if strings.ToLower(t) == strings.ToLower(dnsQuery.QType.String()) {
-			s.log(reqUaddr.IP.String(), dnsQuery.QDomain, reasonDisabled)
+			s.log(reqUAddr.IP.String(), dnsQuery.QDomain, reasonDisabled)
 			resp := GetEmptyDNSResp(data)
-			if _, err := s.udpListener.WriteToUDP(resp, reqUaddr); err != nil {
+			if _, err := s.udpln.WriteToUDP(resp, reqUAddr); err != nil {
 				return err
 			}
 			return nil
 		}
 	}
 	if ip, ok := s.hostMap[dnsQuery.QDomain]; ok {
-		s.log(reqUaddr.IP.String(), dnsQuery.QDomain, reasonMapped)
+		s.log(reqUAddr.IP.String(), dnsQuery.QDomain, reasonMapped)
 		resp := GetDNSResp(data, dnsQuery.QDomain, ip)
-		if _, err := s.udpListener.WriteToUDP(resp, reqUaddr); err != nil {
+		if _, err := s.udpln.WriteToUDP(resp, reqUAddr); err != nil {
 			return err
 		}
 		return nil
@@ -233,10 +228,10 @@ func (s *DNS) handle(reqUaddr *net.UDPAddr, data []byte) error {
 
 	if s.badDomain(dnsQuery.QDomain) {
 		s.l.Debug("block ad host", dnsQuery.QDomain)
-		s.log(reqUaddr.IP.String(), dnsQuery.QDomain, reasonBlocked)
+		s.log(reqUAddr.IP.String(), dnsQuery.QDomain, reasonBlocked)
 		// return 127.0.0.1 for this host
 		resp := GetDNSResp(data, dnsQuery.QDomain, "127.0.0.1")
-		if _, err := s.udpListener.WriteToUDP(resp, reqUaddr); err != nil {
+		if _, err := s.udpln.WriteToUDP(resp, reqUAddr); err != nil {
 			return err
 		}
 		return nil
@@ -245,7 +240,7 @@ func (s *DNS) handle(reqUaddr *net.UDPAddr, data []byte) error {
 		cachedData := s.Cache.Get(dnsQuery.CacheKey())
 		if cachedData != nil {
 			s.l.Debug("dns cache hit:", dnsQuery.QDomain)
-			s.log(reqUaddr.IP.String(), dnsQuery.QDomain, reasonCached)
+			s.log(reqUAddr.IP.String(), dnsQuery.QDomain, reasonCached)
 			resp := cachedData.([]byte)
 			if len(resp) <= 2 {
 				s.l.Error("invalid cached data", resp, dnsQuery.QDomain, dnsQuery.QType.String())
@@ -253,19 +248,19 @@ func (s *DNS) handle(reqUaddr *net.UDPAddr, data []byte) error {
 				// rewrite first 2 bytes(dns id)
 				resp[0] = data[0]
 				resp[1] = data[1]
-				if _, err := s.udpListener.WriteToUDP(resp, reqUaddr); err != nil {
+				if _, err := s.udpln.WriteToUDP(resp, reqUAddr); err != nil {
 					return err
 				}
 				return nil
 			}
 		}
 	}
-	raw, msg, err := s.doQuery(reqUaddr.IP.String(), data, dnsQuery)
+	raw, msg, err := s.doQuery(reqUAddr.IP.String(), data, dnsQuery)
 	if err != nil {
 		return err
 	}
 
-	if _, err := s.udpListener.WriteToUDP(raw, reqUaddr); err != nil {
+	if _, err := s.udpln.WriteToUDP(raw, reqUAddr); err != nil {
 		return err
 	}
 	if s.Cache != nil && len(raw) > 0 {
@@ -276,13 +271,11 @@ func (s *DNS) handle(reqUaddr *net.UDPAddr, data []byte) error {
 
 	return nil
 }
-
 func (s *DNS) log(src, domain, result string) {
 	if s.dnsLogger != nil {
 		s.dnsLogger.Printf("%s,%s,%s \n", src, domain, result)
 	}
 }
-
 func (s *DNS) getCacheTime(msg *DNSMsg) time.Duration {
 	if s.enforceTTL > 0 {
 		return time.Duration(s.enforceTTL) * time.Second
@@ -292,7 +285,6 @@ func (s *DNS) getCacheTime(msg *DNSMsg) time.Duration {
 	}
 	return defaultTTL * time.Second
 }
-
 func (s *DNS) parse(data []byte) (*DNSMsg, error) {
 	msg, err := NewDNSMsg(data)
 	if err != nil {
@@ -300,7 +292,6 @@ func (s *DNS) parse(data []byte) (*DNSMsg, error) {
 	}
 	return msg, nil
 }
-
 func (s *DNS) doQuery(srcIP string, data []byte, dnsQuery *DNSMsg) (raw []byte, msg *DNSMsg, err error) {
 	var wg sync.WaitGroup
 	var cnData, fqData []byte
@@ -309,7 +300,7 @@ func (s *DNS) doQuery(srcIP string, data []byte, dnsQuery *DNSMsg) (raw []byte, 
 	go func(data []byte) {
 		defer wg.Done()
 		var err error
-		fqData, err = s.queryFQ(data)
+		fqData, err = s.queryFQ2(data)
 		if err != nil {
 			s.l.Error("failed to query fq dns:", dnsQuery, err)
 			return
@@ -351,27 +342,12 @@ func (s *DNS) doQuery(srcIP string, data []byte, dnsQuery *DNSMsg) (raw []byte, 
 	}
 	return
 }
-
 func (s *DNS) queryCN(data []byte) ([]byte, error) {
-	conn, err := net.DialTimeout("udp", fmt.Sprintf("%s:%d", s.cnDNS, dnsPort), dnsTimeout*time.Second)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-	if err := conn.SetDeadline(time.Now().Add(dnsTimeout * time.Second)); err != nil {
-		return nil, err
-	}
-	if _, err = conn.Write(data); err != nil {
-		return nil, err
-	}
-	b := make([]byte, 1024)
-	n, err := conn.Read(b)
-	if err != nil {
-		return nil, err
-	}
-	return b[:n], nil
+	return cndoh(data)
 }
-
+func (s *DNS) queryFQ2(data []byte) ([]byte, error) {
+	return fqdoh(data)
+}
 func (s *DNS) queryFQ(data []byte) ([]byte, error) {
 	// query fq dns by tcp, it will be captured by iptables and go out through ss
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", s.fqDNS, dnsPort), dnsTimeout*time.Second)

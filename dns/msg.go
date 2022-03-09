@@ -18,7 +18,6 @@ func (t RType) String() string {
 		return "A"
 	case 2:
 		return "NS"
-
 	case 5:
 		return "CNAME"
 	case 6:
